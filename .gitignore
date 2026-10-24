@@ -1,0 +1,5 @@
+node_modules/
+runs/
+pool.sqlite*
+*.log
+.DS_Store
