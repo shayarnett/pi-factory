@@ -5,6 +5,9 @@ a line of narrowly pinned agent stations (planner, designer, mockup, design crit
 tester, developers, code review, QA, visual review, triage, release), each a fresh conversation that sees only
 its inputs and can only write its own lane. Built and tested against a local OpenAI-compatible model.
 
+**Start here: [docs/building-projects.md](docs/building-projects.md)** — target repo setup, story format, running
+the graph, the dashboard, and porting to another stack.
+
 - `src/factory/run.ts` — builds one story in a repo: `npx tsx src/factory/run.ts --repo <repo> --story <slug>`
 - `src/factory/graph.sh` — builds a backlog as a dependency graph: 4 work streams in git worktrees plus a release
   slot that merges finished stories into main (an agent resolves conflicts / red suites)
