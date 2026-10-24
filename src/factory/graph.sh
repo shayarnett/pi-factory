@@ -6,6 +6,8 @@
 # gate or release stops new starts; main is put back to the last release.
 #
 #   src/factory/graph.sh [story ...]   # default: every story not yet released; adopts stories already running
+#   RUNNER=src/assets/run.ts SUITE=tools/check-all.sh SETUP='ln -s $REPO/node_modules node_modules' ROOTS= \
+#     REPO=~/props WT=~/props-wt src/factory/graph.sh                # the asset factory
 #   FAKE=1 REPO=<clone> WT=<dir> RUNS=<dir> src/factory/graph.sh   # stub stations, to test the mechanics
 cd "$(dirname "$0")/../.."
 PI=$PWD
@@ -13,15 +15,20 @@ REPO=${REPO:-~/acme}
 WT=${WT:-~/acme-wt}
 RUNS=${RUNS:-$PI/runs}
 MAX=${MAX:-4}
+RUNNER=${RUNNER:-src/factory/run.ts}
+SUITE=${SUITE:-"bin/rails db:prepare >/dev/null && bin/rails test && bin/rails test:system"}
+SETUP=${SETUP:-"bin/rails db:prepare >/dev/null"}
+ROOTS=${ROOTS-user-signs-up} # stories treated as released without a done/ tag
 export LOCAL_LLM_BASE_URL=http://127.0.0.1:18888/v1
 mise_env() { eval "$(mise env -C "$1" -s bash)"; }
 log() { echo "$(date +%T) $*"; }
 
 cd "$REPO" || exit 1
 [ "$(git branch --show-current)" = main ] || { log "$REPO must be on main"; exit 1; }
-merged() { [ "$1" = user-signs-up ] || git merge-base --is-ancestor "refs/tags/done/$1" main 2>/dev/null; }
+merged() { case " $ROOTS " in *" $1 "*) return 0 ;; esac; git merge-base --is-ancestor "refs/tags/done/$1" main 2>/dev/null; }
 deps() { grep -o 'Depends on: [a-z0-9-]*' "$REPO/factory/stories/$1/story.md" | sed 's/Depends on: //'; }
-suite() { [ -n "$FAKE" ] || (mise_env "$REPO" && bin/rails db:prepare >/dev/null 2>&1 && bin/rails test >"$1" 2>&1 && bin/rails test:system >>"$1" 2>&1); }
+suite() { [ -n "$FAKE" ] || (mise_env "$REPO" && eval "$SUITE" >"$1" 2>&1); }
+gate_ok() { grep -q "^- gate: pass" "$1" 2>/dev/null || { grep -q "bin/rails test: pass" "$1" && grep -q "bin/rails test:system: pass" "$1"; } 2>/dev/null; }
 
 todo=""
 running="" # "story:pid" pairs
@@ -29,7 +36,7 @@ for s in ${@:-$(ls factory/stories)}; do
 	merged "$s" && continue
 	pid=$(pgrep -o -f "run.ts --repo $WT/$s --story $s")
 	if [ -n "$pid" ]; then running="$running $s:$pid"; log "adopt $s (pid $pid)"
-	elif git rev-parse -q --verify "story/$s" >/dev/null && grep -q "bin/rails test:system: pass" "$RUNS/$s/audit.md" 2>/dev/null; then
+	elif git rev-parse -q --verify "story/$s" >/dev/null && ! git merge-base --is-ancestor "story/$s" main && gate_ok "$RUNS/$s/audit.md"; then
 		running="$running $s:0"; log "pending release: $s" # finished earlier; release it without rebuilding
 	else todo="$todo $s"; fi
 done
@@ -42,14 +49,14 @@ launch() {
 	git tag -d "start/$s" >/dev/null 2>&1
 	git worktree remove --force "$dir" 2>/dev/null
 	git worktree add -q -B "story/$s" "$dir" main
-	(cd "$dir" && mise trust -q . && mise_env "$dir" && bin/rails db:prepare >/dev/null 2>&1)
+	(cd "$dir" && { [ -f .mise.toml ] && mise trust -q .; mise_env "$dir"; eval "$SETUP"; } >/dev/null 2>&1)
 	log "start $s"
 	if [ -n "$FAKE" ]; then
 		(sleep $((RANDOM % 5 + 2)); cd "$dir" && echo "<!-- $s -->" >> app/views/home/index.html.erb && echo "/* $s */" >> app/assets/stylesheets/home.css && git add -A &&
 			git -c user.name=fake -c user.email=f@x commit -qm "[fake] $s" && mkdir -p "$RUNS/$s" &&
 			printf -- '- bin/rails test: pass\n- bin/rails test:system: pass\n' > "$RUNS/$s/audit.md") &
 	else
-		(cd "$PI" && npx tsx src/factory/run.ts --repo "$dir" --story "$s" > "$RUNS/$s.log" 2>&1) &
+		(cd "$PI" && npx tsx "$RUNNER" --repo "$dir" --story "$s" > "$RUNS/$s.log" 2>&1) &
 	fi
 	running="$running $s:$!"
 }
@@ -58,6 +65,7 @@ launch() {
 release_fix() {
 	local s=$1 why=$2 files out=$RUNS/release-$s.log
 	files=$(echo $3) # one line, space-separated
+	[ -n "$files" ] || { log "release station: $why in $s, but no files to fix"; return; }
 	log "release station: $why in $s ($(echo $files | wc -w | tr -d ' ') files)"
 	if [ -n "$FAKE" ]; then
 		for f in $files; do grep -v '^\(<<<<<<<\|=======\|>>>>>>>\)' "$f" > "$f.tmp" && mv "$f.tmp" "$f"; done
@@ -77,14 +85,14 @@ $(cat "$RUNS/release-$s.suite" 2>/dev/null | tail -60)" </dev/null >>"$out" 2>&1
 
 finish() {
 	local s=$1 a=$RUNS/$1/audit.md base
-	if ! { grep -q "bin/rails test: pass" "$a" && grep -q "bin/rails test:system: pass" "$a"; } 2>/dev/null; then
+	if ! gate_ok "$a"; then
 		log "FAIL gate $s (worktree kept: $WT/$s)"; stop=1; return
 	fi
 	base=$(git rev-parse HEAD)
 	if ! git merge -q --no-ff --no-commit "story/$s" >/dev/null 2>&1; then
 		local conflicted=$(echo $(git diff --name-only --diff-filter=U))
 		release_fix "$s" "it conflicted" "$conflicted"
-		if git diff --name-only --diff-filter=U | grep -q . || grep -l '^<<<<<<<\|^>>>>>>>' $conflicted >/dev/null 2>&1; then
+		if [ -z "$conflicted" ] || git diff --name-only --diff-filter=U | grep -q . || grep -l '^<<<<<<<\|^>>>>>>>' $conflicted </dev/null >/dev/null 2>&1; then
 			git merge --abort; log "FAIL release $s: conflict not resolved (branch story/$s kept)"; stop=1; return
 		fi
 		git add -- $conflicted

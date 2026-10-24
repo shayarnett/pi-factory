@@ -195,3 +195,34 @@ The station prompts are mostly stack-neutral. The stack lives in `stack.md` and 
   prompts.
 
 In `graph.sh`, `suite()` and the `bin/rails db:prepare` calls are Rails-specific.
+
+## 8. The asset factory (3D, glTF)
+
+The same graph runner and release slot also build 3D assets. `src/assets/run.ts` takes one asset story to a
+validated `.glb`:
+
+```
+art-director (brief.md + brief.json: size, triangle budget, materials)
+  → modeler (Blender Python build.py) ⇄ tools/check.sh (build, Khronos validator, size, tris, watertight,
+                                        floating parts, origin) → renders (6 views + human-scale view)
+  → art-critique (vision) ⇄ modeler … up to 5 rounds → gate
+```
+
+**Target repo:** copy `templates/assets/` into it, and run `npm i gltf-validator`.
+- `factory/style.md` is the rulebook: the look, the palette, meters at real-world size, origin at the bottom
+  center, and triangle budgets.
+- `tools/` holds the fixed checks and renders. Stations can't edit them, so no station grades its own work.
+- Stories go in `factory/stories/<slug>/story.md`. Add an optional `reference.png` and both the art director and
+  the critic read it.
+
+**Requirements:** Blender on PATH (tested with 5.2) and Node.
+
+**Run the whole backlog:**
+
+```sh
+RUNNER=src/assets/run.ts SUITE=tools/check-all.sh SETUP='ln -s ~/props/node_modules node_modules' ROOTS= \
+  REPO=~/props WT=~/props-wt src/factory/graph.sh
+```
+
+Add `node_modules` to `.git/info/exclude` (not just `.gitignore` with a trailing slash), so the worktrees'
+symlink isn't cleaned up as an out-of-lane file.
