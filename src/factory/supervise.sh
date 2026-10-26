@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # src/factory/supervise.sh <repo> <runs> <story ...> : supervisor reviews the stories' workstreams and suggests
-# changes; HR applies them (job descriptions, factory/staff.json, pool size). Each is a pi agent; anything it
+# changes; AIR applies them (job descriptions, factory/staff.json, pool size). Each is a pi agent; anything it
 # writes outside its lane is reverted. Commits the result in <repo> (graph.sh runs this in a worktree).
 set -u
 PI=$(cd "$(dirname "$0")/../.." && pwd)
@@ -39,7 +39,7 @@ Review these $# workstreams and write your suggestions to $P.
 ## Stations
 $(stations)
 
-## Staff roles HR added (factory/staff.json)
+## Staff roles AIR added (factory/staff.json)
 $(cat factory/staff.json 2>/dev/null || echo '(none)')
 
 ## Workstreams
@@ -48,7 +48,7 @@ keep "$P"
 [ -f "$P" ] || { echo "supervisor wrote no $P"; exit 1; }
 echo "supervisor: $(jq -c '[.changes[]? | .type + ":" + (.name // .station // "")]' "$P" 2>/dev/null)"
 
-pi -p "$(cat "$PI/src/factory/roles/hr.md")
+pi -p "$(cat "$PI/src/factory/roles/air.md")
 
 ## Task
 Apply the supervisor's suggestions and size the pool.
@@ -66,11 +66,11 @@ $(stations)
 $(cat factory/staff.json 2>/dev/null || echo '(none yet; create it as {"roles": []})')
 
 ## factory/staff/log.md (last 40 lines)
-$(tail -40 factory/staff/log.md 2>/dev/null || echo '(none yet)')" </dev/null > "$RUNS/hr-$(date +%s).log" 2>&1
+$(tail -40 factory/staff/log.md 2>/dev/null || echo '(none yet)')" </dev/null > "$RUNS/air-$(date +%s).log" 2>&1
 keep "$P" "factory/stations/*.md" factory/staff.json factory/staff/pool.json factory/staff/log.md
 jq -e . factory/staff.json >/dev/null 2>&1 || git checkout -q -- factory/staff.json 2>/dev/null || rm -f factory/staff.json
 jq -e '.streams >= 1 and .streams <= 8' factory/staff/pool.json >/dev/null 2>&1 || git checkout -q -- factory/staff/pool.json 2>/dev/null || rm -f factory/staff/pool.json
-echo "hr: $(git status --short | tr '\n' ' ')"
+echo "air: $(git status --short | tr '\n' ' ')"
 git add -A factory/staff factory/stations
 git add -f "$P" 2>/dev/null
-git -c user.name=hr -c user.email=hr@factory.local commit -qm "[staff] supervisor + HR after: $*" || echo "hr: no changes"
+git -c user.name=air -c user.email=air@factory.local commit -qm "[staff] supervisor + AIR after: $*" || echo "air: no changes"

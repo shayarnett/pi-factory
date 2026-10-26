@@ -235,7 +235,7 @@ async function runOnce(step: Step, feedback?: string): Promise<Result> {
 	);
 	return { ok, report, changed: kept, reverted, refused: state.refused, calls: state.calls, check };
 }
-const run = withStaff(runOnce, { repo: REPO, story: STORY, lanes: LANES }); // + HR's roles (factory/staff.json)
+const run = withStaff(runOnce, { repo: REPO, story: STORY, lanes: LANES }); // + AIR's roles (factory/staff.json)
 
 /** Runs a build step, then its gate; on "changes" reruns the build step with the issue (up to `rounds`). */
 async function gated(build: Step, review: (built: Result) => Step, rounds = 2) {

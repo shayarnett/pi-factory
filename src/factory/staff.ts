@@ -1,4 +1,4 @@
-// Staff roles added by HR (src/factory/roles/hr.md), shared by every runner. factory/staff.json in the target repo:
+// Staff roles added by AIR (src/factory/roles/air.md), shared by every runner. factory/staff.json in the target repo:
 //   { "roles": [{ "name": "<station>", "when": "before" | "after", "station": "<existing station>", "task": "..." }] }
 // The role's job description is factory/stations/<name>.md. A "before" role writes notes that the station then
 // reads as an input; an "after" role reviews the station's work and writes a verdict; "changes" sends it back once.
@@ -19,7 +19,7 @@ function roles(repo: string): Role[] {
 	}
 }
 
-// Wraps a runner's single-step function so HR's roles run around the station they attach to.
+// Wraps a runner's single-step function so AIR's roles run around the station they attach to.
 export function withStaff<S extends Step, R extends Result>(
 	runOnce: (step: S, feedback?: string) => Promise<R>,
 	{ repo, story, lanes }: { repo: string; story: string; lanes: Lanes },

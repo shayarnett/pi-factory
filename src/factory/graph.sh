@@ -25,7 +25,7 @@ FOREVER=${FOREVER-}
 LOW=${LOW:-3}
 CURATE=${CURATE-}
 # STAFF (default on; STAFF= turns it off): after every 3 finished stories, src/factory/supervise.sh (supervisor +
-# HR) runs in worktree $WT/_staff on branch staff and is merged like the curator. HR sets the pool size in
+# AIR) runs in worktree $WT/_staff on branch staff and is merged like the curator. AIR sets the pool size in
 # factory/staff/pool.json ({"streams": n}), which overrides MAX and is reread every loop.
 STAFF=${STAFF-1}
 export LOCAL_LLM_BASE_URL=http://127.0.0.1:18888/v1
@@ -116,7 +116,7 @@ curate_tick() {
 	curating=$!
 }
 
-# Every finished story goes in $RUNS/finished.tsv: end start story pass|fail streams (for the supervisor and HR).
+# Every finished story goes in $RUNS/finished.tsv: end start story pass|fail streams (for the supervisor and AIR).
 finish() {
 	local r=fail; release "$1"
 	git merge-base --is-ancestor "refs/tags/done/$1" HEAD 2>/dev/null && r=pass
@@ -153,7 +153,7 @@ release() {
 	log "RELEASE $n: $s"
 }
 
-# Supervisor + HR: after every 3 finished stories, in their own worktree; merged between releases.
+# Supervisor + AIR: after every 3 finished stories, in their own worktree; merged between releases.
 staffing=0 since=0 recent=""
 staff_tick() {
 	if [ "$staffing" != 0 ]; then

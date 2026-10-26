@@ -217,7 +217,7 @@ async function runOnce(step: Step, feedback?: string): Promise<Result> {
 	);
 	return { ok, report, changed: kept, reverted, refused: state.refused, calls: state.calls, check };
 }
-const run = withStaff(runOnce, { repo: REPO, story: STORY, lanes: LANES }); // + HR's roles (factory/staff.json)
+const run = withStaff(runOnce, { repo: REPO, story: STORY, lanes: LANES }); // + AIR's roles (factory/staff.json)
 
 
 // ─── Pipeline ────────────────────────────────────────────────────────────────
