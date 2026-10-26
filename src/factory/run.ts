@@ -14,6 +14,7 @@ import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { createBashTool, createEditTool, createReadTool, createWriteTool } from "@earendil-works/pi-durable/tools";
 import { localModels, MODEL_ID, PROVIDER } from "../local-model.ts";
+import { withStaff } from "./staff.ts";
 
 const context = BACKGROUND_CONTEXT;
 const arg = (name: string, fallback?: string) => {
@@ -153,7 +154,7 @@ const steps: { key: string; station: string; conv: number; status: string; start
 const saveSteps = () => writeFileSync(STEPS_FILE, JSON.stringify({ story: STORY, steps }, null, 1));
 
 let stepNo = 0;
-async function run(step: Step, feedback?: string): Promise<Result> {
+async function runOnce(step: Step, feedback?: string): Promise<Result> {
 	stepNo++;
 	const started = Date.now();
 	const allow = LANES[step.station]!.allow.join(", ") + (LANES[step.station]!.deny ? ` (except ${LANES[step.station]!.deny!.join(", ")})` : "");
@@ -234,6 +235,7 @@ async function run(step: Step, feedback?: string): Promise<Result> {
 	);
 	return { ok, report, changed: kept, reverted, refused: state.refused, calls: state.calls, check };
 }
+const run = withStaff(runOnce, { repo: REPO, story: STORY, lanes: LANES }); // + HR's roles (factory/staff.json)
 
 /** Runs a build step, then its gate; on "changes" reruns the build step with the issue (up to `rounds`). */
 async function gated(build: Step, review: (built: Result) => Step, rounds = 2) {

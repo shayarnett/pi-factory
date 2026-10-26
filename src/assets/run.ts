@@ -1,9 +1,11 @@
 // Asset factory runner: builds one 3D asset story (a .glb) through pinned stations, like src/factory/run.ts.
 //   art-director (brief) → modeler (Blender build.py) ⇄ [tools/check.sh: build, glTF validator, measurements vs brief]
-//                        → renders → art-critique (vision) ⇄ modeler … → gate
+//                        → renders → art-critique (vision) → geometry-review (ortho clay views) ⇄ modeler … → gate
 // The checks and renders are fixed tools in the target repo, so a station can't grade its own work.
 //
 //   npx tsx src/assets/run.ts --repo ~/props --story <slug>
+//   npx tsx src/assets/run.ts --repo ~/props --scene <name>   # lay out scenes/<name>/brief.md from existing props:
+//     set-dresser (scene.json) ⇄ [tools/scene.sh: assemble, overlaps, stacking, bounds] → renders → scene-critique ⇄ …
 import { execSync } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -14,6 +16,7 @@ import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { createBashTool, createEditTool, createReadTool, createWriteTool } from "@earendil-works/pi-durable/tools";
 import { localModels, MODEL_ID, PROVIDER } from "../local-model.ts";
+import { withStaff } from "../factory/staff.ts";
 
 const context = BACKGROUND_CONTEXT;
 const arg = (name: string, fallback?: string) => {
@@ -21,9 +24,11 @@ const arg = (name: string, fallback?: string) => {
 	return i >= 0 ? process.argv[i + 1]! : fallback;
 };
 const REPO = resolve(arg("repo")!.replace(/^~/, process.env.HOME!));
-const STORY = arg("story")!;
+const SCENE = arg("scene");
+const CURATE = arg("curate"); // number of new stories
+const STORY = SCENE ? `scene-${SCENE}` : CURATE ? `curate-${Date.now()}` : arg("story")!;
 const BUDGET = Number(arg("budget", "25"));
-const S = `factory/stories/${STORY}`;
+const S = SCENE ? `scenes/${SCENE}` : `factory/stories/${STORY}`;
 const RUN_DIR = join(import.meta.dirname, "..", "..", "runs", STORY);
 mkdirSync(RUN_DIR, { recursive: true });
 const AUDIT = join(RUN_DIR, "audit.md");
@@ -36,6 +41,10 @@ const LANES: Record<string, { allow: string[]; deny?: string[] }> = {
 	"art-director": { allow: [`${S}/brief.md`, `${S}/brief.json`] },
 	modeler: { allow: [`${A}/**`] },
 	"art-critique": { allow: [`${S}/reviews/**`] },
+	"geometry-review": { allow: [`${S}/reviews/**`] },
+	curator: { allow: ["factory/stories/*/story.md", "factory/collections/*/style.md"] },
+	"set-dresser": { allow: [`${S}/scene.json`] },
+	"scene-critique": { allow: [`${S}/reviews/**`] },
 };
 const globRe = (g: string) =>
 	new RegExp(`^${g.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*\*/g, "\0").replace(/\*/g, "[^/]*").replace(/\0/g, ".*")}$`);
@@ -137,7 +146,7 @@ const steps: { key: string; station: string; conv: number; status: string; start
 const saveSteps = () => writeFileSync(STEPS_FILE, JSON.stringify({ story: STORY, steps }, null, 1));
 
 let stepNo = 0;
-async function run(step: Step, feedback?: string): Promise<Result> {
+async function runOnce(step: Step, feedback?: string): Promise<Result> {
 	stepNo++;
 	const started = Date.now();
 	const allow = LANES[step.station]!.allow.join(", ") + (LANES[step.station]!.deny ? ` (except ${LANES[step.station]!.deny!.join(", ")})` : "");
@@ -218,19 +227,27 @@ async function run(step: Step, feedback?: string): Promise<Result> {
 	);
 	return { ok, report, changed: kept, reverted, refused: state.refused, calls: state.calls, check };
 }
+const run = withStaff(runOnce, { repo: REPO, story: STORY, lanes: LANES }); // + HR's roles (factory/staff.json)
 
 
 // ─── Pipeline ────────────────────────────────────────────────────────────────
+
+if (SCENE) await scenePipeline();
+if (CURATE) await curate(Number(CURATE));
+const COLLECTION = `factory/collections/${(read(`${S}/story.md`) ?? "").match(/Collection: ([a-z0-9-]+)/)?.[1] ?? "fantasy-town"}/style.md`;
 
 const ROUNDS = Number(arg("rounds", "5"));
 const RENDERS = join(RUN_DIR, "renders");
 const VERDICT = `${S}/reviews/art-critique.json`;
 const REFERENCE = `${S}/reference.png`;
+const GEO_VERDICT = `${S}/reviews/geometry-review.json`;
 const VIEWS = ["three-quarter", "front", "side", "back-three-quarter", "top", "scale"];
+const GEO_VIEWS = ["geo-front", "geo-side", "geo-top"];
 const render = (round: number) => {
 	const dir = join(RENDERS, `r${round}`);
 	shOk(`blender -b --factory-startup --python tools/render.py -- ${A}/${STORY}.glb "${dir}"`);
-	return VIEWS.map((v) => join(dir, `${v}.png`)).filter((p) => existsSync(p));
+	const of = (views: string[]) => views.map((v) => join(dir, `${v}.png`)).filter((p) => existsSync(p));
+	return { art: of(VIEWS), geo: of(GEO_VIEWS) };
 };
 
 writeFileSync(AUDIT, `# Asset run: ${STORY}\n\nRepo ${REPO} at ${sh("git rev-parse --short HEAD").trim()}, ${new Date().toISOString()}, model ${MODEL_ID}, budget ${BUDGET} tool calls/step.\n`);
@@ -240,7 +257,7 @@ const hasRef = existsSync(join(REPO, REFERENCE));
 await run({
 	key: "brief", station: "art-director", prompt: "art-director",
 	task: `Write the brief for this asset: ${S}/brief.md and ${S}/brief.json.${hasRef ? `\n\nReference image (read it): ${join(REPO, REFERENCE)}` : ""}`,
-	inputs: [`${S}/story.md`, "factory/style.md"],
+	inputs: [`${S}/story.md`, "factory/style.md", COLLECTION],
 	outputs: [`${S}/brief.md`, `${S}/brief.json`],
 });
 
@@ -252,7 +269,7 @@ for (let round = 0; round < ROUNDS; round++) {
 		{
 			key: `model${round ? `#${round}` : ""}`, station: "modeler", prompt: "modeler",
 			task: `Write ${A}/build.py, the Blender script that builds this asset to its brief. The runner then runs \`tools/check.sh ${STORY}\`.`,
-			inputs: [`${S}/brief.md`, `${S}/brief.json`, "factory/style.md", "tools/kit.py", `${A}/build.py`],
+			inputs: [`${S}/brief.md`, `${S}/brief.json`, "factory/style.md", COLLECTION, "tools/kit.py", `${A}/build.py`],
 			outputs: [`${A}/build.py`],
 			check: `tools/check.sh ${STORY}`,
 		},
@@ -264,22 +281,117 @@ for (let round = 0; round < ROUNDS; round++) {
 		continue;
 	}
 	const shots = render(round);
-	log(`- renders: ${shots.length} views in ${join(RENDERS, `r${round}`)}`);
+	log(`- renders: ${shots.art.length + shots.geo.length} views in ${join(RENDERS, `r${round}`)}`);
 	await run({
 		key: `art-critique${round ? `#${round}` : ""}`, station: "art-critique", prompt: "art-critique",
-		task: `Critique the asset against its brief. Write the verdict to ${VERDICT}.\n\nRenders (read each):\n${shots.map((p) => `- ${p}`).join("\n")}${hasRef ? `\n\nReference image (read it): ${join(REPO, REFERENCE)}` : ""}\n\nMeasured by tools/check.sh:\n\`\`\`\n${tail(checked.out, 1200)}\n\`\`\``,
-		inputs: [`${S}/brief.md`, `${S}/brief.json`, "factory/style.md"],
+		task: `Critique the asset against its brief. Write the verdict to ${VERDICT}.\n\nRenders (read each):\n${shots.art.map((p) => `- ${p}`).join("\n")}${hasRef ? `\n\nReference image (read it): ${join(REPO, REFERENCE)}` : ""}\n\nMeasured by tools/check.sh:\n\`\`\`\n${tail(checked.out, 1200)}\n\`\`\``,
+		inputs: [`${S}/brief.md`, `${S}/brief.json`, "factory/style.md", COLLECTION],
 		outputs: [VERDICT],
 	});
 	const verdict = readJson(VERDICT);
-	if (verdict?.verdict === "approve") {
+	if (verdict?.verdict !== "approve") {
+		feedback = `The art critic requested changes: ${verdict?.issue ?? "no valid verdict; recheck the asset against the brief"}`;
+		continue;
+	}
+	await run({
+		key: `geometry-review${round ? `#${round}` : ""}`, station: "geometry-review", prompt: "geometry-review",
+		task: `Review the asset's geometry from the orthographic clay views. Write the verdict to ${GEO_VERDICT}.\n\nRenders (read each):\n${shots.geo.map((p) => `- ${p}`).join("\n")}`,
+		inputs: [`${S}/brief.md`],
+		outputs: [GEO_VERDICT],
+	});
+	const geo = readJson(GEO_VERDICT);
+	if (geo?.verdict === "approve") {
 		approved = true;
 		break;
 	}
-	feedback = `The art critic requested changes: ${verdict?.issue ?? "no valid verdict; recheck the asset against the brief"}`;
+	feedback = `The geometry reviewer requested changes: ${geo?.issue ?? "no valid verdict; recheck the geometry in front, side and top views"}`;
 }
 
 checked = shOk(`tools/check.sh ${STORY}`);
-log(`\n## Gate\n- check: ${checked.ok ? "pass" : "FAIL"}\n- art critique: ${approved ? "approve" : "not approved"}\n- gate: ${checked.ok && approved ? "pass" : "FAIL"}\n\n\`\`\`\n${tail(checked.out, 1500)}\n\`\`\``);
+log(`\n## Gate\n- check: ${checked.ok ? "pass" : "FAIL"}\n- art critique + geometry review: ${approved ? "approve" : "not approved"}\n- gate: ${checked.ok && approved ? "pass" : "FAIL"}\n\n\`\`\`\n${tail(checked.out, 1500)}\n\`\`\``);
 await harness.close(context);
 process.exit(0);
+
+// ─── Scene pipeline ──────────────────────────────────────────────────────────
+
+async function scenePipeline() {
+	const rounds = Number(arg("rounds", "4"));
+	const verdictFile = `${S}/reviews/scene-critique.json`;
+	const check = `tools/scene.sh ${SCENE}`;
+	const slugs = readdirSync(join(REPO, "assets")).filter((d) => existsSync(join(REPO, "assets", d, `${d}.glb`)));
+	const story = (d: string) => (read(`factory/stories/${d}/story.md`) ?? "").split("\n").find((l) => l.startsWith("#"))?.replace(/^#+\s*(Story:\s*)?/, "") ?? d;
+	// Measured footprints come from the check itself, run on an empty scene of every asset.
+	writeFileSync(join(RUN_DIR, "catalog.json"), JSON.stringify({ size: [100, 100], instances: slugs.map((a, i) => ({ asset: a, x: i * 5 - 40, y: 0 })) }));
+	mkdirSync(join(REPO, "scenes", `_catalog`), { recursive: true });
+	writeFileSync(join(REPO, "scenes", "_catalog", "scene.json"), readFileSync(join(RUN_DIR, "catalog.json"), "utf8"));
+	const measured = shOk("tools/scene.sh _catalog").out.split("\n").filter((l) => l.startsWith("asset "));
+	rmSync(join(REPO, "scenes", "_catalog"), { recursive: true, force: true });
+	const catalog = slugs.map((d) => `- ${d}: ${story(d)}. ${measured.find((l) => l.startsWith(`asset ${d}:`))?.replace(/^asset [^:]+: /, "") ?? ""}`).join("\n");
+	writeFileSync(join(RUN_DIR, "catalog.md"), catalog);
+
+	writeFileSync(AUDIT, `# Scene run: ${SCENE}\n\nRepo ${REPO} at ${sh("git rev-parse --short HEAD").trim()}, ${new Date().toISOString()}, model ${MODEL_ID}.\n\n## Catalog\n${catalog}\n`);
+	if (!shOk(`git rev-parse -q --verify refs/tags/start/${STORY}`).ok) sh(`git tag start/${STORY}`);
+	let feedback: string | undefined;
+	let approved = false;
+	let checked = { ok: false, out: "" };
+	for (let round = 0; round < rounds; round++) {
+		const laid = await run(
+			{
+				key: `layout${round ? `#${round}` : ""}`, station: "set-dresser", prompt: "set-dresser",
+				task: `Lay out scene \`${SCENE}\`: write ${S}/scene.json from the brief, using only these props (measured at rot 0; front faces −Y):\n${catalog}`,
+				inputs: [`${S}/brief.md`, `${S}/scene.json`],
+				outputs: [`${S}/scene.json`],
+				check,
+			},
+			feedback,
+		);
+		checked = laid.check!;
+		if (!checked.ok) {
+			feedback = `\`${check}\` failed. Fix every FAIL line:\n\`\`\`\n${tail(checked.out, 2500)}\n\`\`\``;
+			continue;
+		}
+		const dir = join(RUN_DIR, "renders", `r${round}`);
+		shOk(`blender -b --factory-startup --python tools/render.py -- ${S}/scene.glb "${dir}"`);
+		const shots = ["three-quarter", "front", "back-three-quarter", "top"].map((v) => join(dir, `${v}.png`)).filter((p) => existsSync(p));
+		log(`- renders: ${shots.length} views in ${dir}`);
+		await run({
+			key: `scene-critique${round ? `#${round}` : ""}`, station: "scene-critique", prompt: "scene-critique",
+			task: `Critique the scene layout against its brief. Write the verdict to ${verdictFile}.\n\nRenders (read each; "top" is the overhead plan):\n${shots.map((p) => `- ${p}`).join("\n")}\n\nscene.json and the check output are in your inputs.\n\n\`\`\`\n${tail(checked.out, 1200)}\n\`\`\``,
+			inputs: [`${S}/brief.md`, `${S}/scene.json`],
+			outputs: [verdictFile],
+		});
+		const verdict = readJson(verdictFile);
+		if (verdict?.verdict === "approve") {
+			approved = true;
+			break;
+		}
+		feedback = `The scene critic requested changes: ${verdict?.issue ?? "no valid verdict; recheck the layout against the brief"}`;
+	}
+	checked = shOk(check);
+	log(`\n## Gate\n- check: ${checked.ok ? "pass" : "FAIL"}\n- scene critique: ${approved ? "approve" : "not approved"}\n- gate: ${checked.ok && approved ? "pass" : "FAIL"}\n\n\`\`\`\n${tail(checked.out, 1500)}\n\`\`\``);
+	await harness.close(context);
+	process.exit(0);
+}
+
+// ─── Curator: refill the backlog ─────────────────────────────────────────────
+
+async function curate(n: number) {
+	const themes = arg("themes", "")!;
+	const collections = readdirSync(join(REPO, "factory/collections"));
+	const stories = readdirSync(join(REPO, "factory/stories")).filter((d) => existsSync(join(REPO, "factory/stories", d, "story.md")));
+	const byCollection = collections.map((c) => `- ${c}: ${stories.filter((d) => read(`factory/stories/${d}/story.md`)!.includes(`Collection: ${c}`)).join(", ") || "(none yet)"}`).join("\n");
+	const before = new Set(stories);
+	writeFileSync(AUDIT, `# Curate ${n}\n\nRepo ${REPO}, ${new Date().toISOString()}, themes: ${themes || "(any)"}.\n`);
+	await run({
+		key: "curate", station: "curator", prompt: "curator",
+		task: `Write ${n} new asset stories.${themes ? ` Requested themes (make collections for any that have none): ${themes}.` : ""}\n\nCollections and their stories so far:\n${byCollection}\n\nRead a collection's style.md before writing stories for it.`,
+		inputs: ["factory/style.md", "factory/stories/wooden-barrel/story.md"],
+		outputs: [],
+		budget: 30 + n * 2,
+	});
+	const added = readdirSync(join(REPO, "factory/stories")).filter((d) => !before.has(d) && existsSync(join(REPO, "factory/stories", d, "story.md")));
+	const bad = added.filter((d) => !/Collection: [a-z0-9-]+/.test(read(`factory/stories/${d}/story.md`)!) || !existsSync(join(REPO, `factory/collections/${read(`factory/stories/${d}/story.md`)!.match(/Collection: ([a-z0-9-]+)/)?.[1]}/style.md`)));
+	log(`\n## Curated\n- ${added.length} new stories: ${added.join(", ")}${bad.length ? `\n- **no valid collection: ${bad.join(", ")}**` : ""}`);
+	await harness.close(context);
+	process.exit(0);
+}
