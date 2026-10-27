@@ -88,6 +88,16 @@ $(cat factory/staff.json 2>/dev/null || echo '(none yet; create it as {"roles": 
 $(tail -40 factory/staff/log.md 2>/dev/null || echo '(none yet)')" </dev/null > "$RUNS/air-$(date +%s).log" 2>&1
 keep "$P" "factory/stations/*.md" factory/staff.json factory/staff/pool.json factory/staff/log.md
 jq -e . factory/staff.json >/dev/null 2>&1 || git checkout -q -- factory/staff.json 2>/dev/null || rm -f factory/staff.json
+# A role must run before/after a real station and have its own job description; drop (and log) any that don't.
+if [ -f factory/staff.json ]; then
+	stations=$(ls factory/stations | sed -n 's/\.md$//p' | jq -R . | jq -s .)
+	bad=$(jq -c --argjson st "$stations" '[.roles[]? | select((.when == "before" or .when == "after") and (.station | IN($st[])) and (.name | IN($st[])) and .name != .station | not)]' factory/staff.json)
+	if [ "$bad" != "[]" ]; then
+		jq --argjson st "$stations" '.roles |= [.[]? | select((.when == "before" or .when == "after") and (.station | IN($st[])) and (.name | IN($st[])) and .name != .station)]' factory/staff.json > factory/staff.json.tmp && mv factory/staff.json.tmp factory/staff.json
+		printf -- '- Runner dropped invalid roles (need when: before|after, station: an existing station name, name: a new station with its own .md): %s\n' "$bad" >> factory/staff/log.md
+		echo "air: dropped invalid roles $bad"
+	fi
+fi
 jq -e '.streams >= 1 and .streams <= 8' factory/staff/pool.json >/dev/null 2>&1 || git checkout -q -- factory/staff/pool.json 2>/dev/null || rm -f factory/staff/pool.json
 echo "air: $(git status --short | tr '\n' ' ')"
 git add -A factory/staff factory/stations; git add -A factory/staff.json 2>/dev/null

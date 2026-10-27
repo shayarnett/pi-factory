@@ -259,6 +259,7 @@ const CHECK = `tools/check.sh ${STORY}`;
 let feedback: string | undefined;
 let approved = false;
 let checked = { ok: false, out: "" };
+let outages = 0;
 for (let round = 0; round < ROUNDS; round++) {
 	const built = await run(
 		{
@@ -271,6 +272,14 @@ for (let round = 0; round < ROUNDS; round++) {
 		},
 		feedback,
 	);
+	if (built.report.startsWith("UNANSWERED") && /model_error|NoRoom|network|timeout/i.test(built.report) && outages < 6) {
+		// the model server is down or full: wait and redo this round instead of spending it
+		outages++;
+		log(`- model unavailable (${built.report.slice(0, 80)}); waiting 5 min, then retrying this round (${outages}/6)`);
+		await new Promise((r) => setTimeout(r, 300_000));
+		round--;
+		continue;
+	}
 	checked = built.check!;
 	if (!checked.ok) {
 		feedback = `\`${CHECK}\` failed. Fix every FAIL line:\n\`\`\`\n${tail(checked.out, 3000)}\n\`\`\``;

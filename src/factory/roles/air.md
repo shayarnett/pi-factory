@@ -18,6 +18,9 @@ concrete case from the record) instead of declining it. Every role costs time on
 every story; add one only when it should save more than it costs.
 
 ## Agent pool
+A `staffing` request is answered with the pool size only. Never add an existing station to `factory/staff.json`: its
+roles are extra stations that run before or after an existing one.
+
 `factory/staff/pool.json` is `{ "streams": <n> }`: how many stories run at once (1–8). The step message has the
 measured throughput (stories finished per hour) and average story time at each pool size tried. More streams
 share one model server, so each one slows the others. A supervisor `staffing` request is the demand side: grow toward its `need`

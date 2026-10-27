@@ -69,12 +69,18 @@ const CAST={
  "visual-review":{c:"#ffcf3f",hat:"star",prop:"✨",nick:"Starla the Spotter"},
  triage:{c:"#f4f4f4",hat:"nurse",prop:"🩺",nick:"Nurse Fix"},
 };
-const ORDER=Object.keys(CAST);
+// Stations appear in the order a run first uses them; one without a costume above gets a generated one, so any
+// factory's stations (planner, implementer, AIR's new roles…) show up.
+const ORDER=[];
+const HATS=["beret","glasses","pencil","hardhat","tophat","helmet","goggles","miner","crown","cone","monocle","detective","star","nurse"];
+const hash=t=>[...t].reduce((a,ch)=>(a*31+ch.charCodeAt(0))>>>0,7);
+function cast(st){return CAST[st]||(CAST[st]={c:"hsl("+hash(st)%360+" 65% 62%)",hat:HATS[hash(st)%HATS.length],prop:"⚙️",
+ nick:st.split("-").map(w=>w[0].toUpperCase()+w.slice(1)).join(" ")})}
 // Positions along a winding path (viewBox 1180x640): three rows, snaking.
 const POS=[[80,200],[225,185],[370,200],[515,185],[660,200],[805,185],[950,200],[1095,290],
  [985,470],[840,455],[695,470],[550,455],[405,470],[260,455],[110,560],
  [270,700],[560,715],[850,700]];
-const posOf=st=>POS[Math.max(0,ORDER.indexOf(st))];
+const posOf=st=>POS[Math.max(0,ORDER.indexOf(st))%POS.length];
 const pct=([x,y])=>({left:x/1180*100+"%",top:y/780*100+"%"});
 const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 
@@ -94,7 +100,7 @@ function hatSvg(h,c){switch(h){
  case"star":return '<g fill="#ffcf3f" stroke="#e0a800" stroke-width="1.5"><path d="M40 40l2.5 5 5.5.8-4 3.9.9 5.5-4.9-2.6-4.9 2.6.9-5.5-4-3.9 5.5-.8z"/><path d="M60 40l2.5 5 5.5.8-4 3.9.9 5.5-4.9-2.6-4.9 2.6.9-5.5-4-3.9 5.5-.8z"/></g>';
  case"nurse":return '<path d="M30 28l4-14h32l4 14z" fill="#fff" stroke="#ddd" stroke-width="2"/><path d="M47 16h6v4h4v6h-4v4h-6v-4h-4v-6h4z" fill="#ff4d4d"/>';
  default:return"";}}
-function kid(st){const k=CAST[st]||{c:"#ccc",hat:"",prop:"❔"};return '<svg class="kid" viewBox="0 0 100 130">'
+function kid(st){const k=cast(st);return '<svg class="kid" viewBox="0 0 100 130">'
  +'<ellipse cx="50" cy="126" rx="26" ry="4" fill="var(--shadow)"/>'
  +'<rect x="36" y="104" width="10" height="18" rx="5" fill="#5b5966"/><rect x="54" y="104" width="10" height="18" rx="5" fill="#5b5966"/>'
  +'<path d="M28 112c0-26 8-38 22-38s22 12 22 38z" fill="'+k.c+'"/>'
@@ -109,19 +115,21 @@ function kid(st){const k=CAST[st]||{c:"#ccc",hat:"",prop:"❔"};return '<svg cla
  +'<text x="80" y="104" font-size="20">'+k.prop+'</text></svg>'}
 
 const stage=document.getElementById("stage");
-// Path through all stations, then the station nodes.
-document.getElementById("paths").innerHTML='<polyline points="'+POS.map(p=>p.join(",")).join(" ")+'" fill="none" stroke="var(--path)" stroke-width="26" stroke-linecap="round" stroke-linejoin="round"/>'
- +'<polyline points="'+POS.map(p=>p.join(",")).join(" ")+'" fill="none" stroke="var(--line)" stroke-width="3" stroke-dasharray="2 12" stroke-linecap="round"/>'
- +POS.map(([x,y])=>'<ellipse cx="'+x+'" cy="'+(y+2)+'" rx="52" ry="14" fill="var(--grass2)"/>').join("");
+// The path runs through the stations this run uses; nodes are added as stations first appear.
+function drawPaths(){const pts=POS.slice(0,Math.max(2,ORDER.length));
+ document.getElementById("paths").innerHTML='<polyline points="'+pts.map(p=>p.join(",")).join(" ")+'" fill="none" stroke="var(--path)" stroke-width="26" stroke-linecap="round" stroke-linejoin="round"/>'
+ +'<polyline points="'+pts.map(p=>p.join(",")).join(" ")+'" fill="none" stroke="var(--line)" stroke-width="3" stroke-dasharray="2 12" stroke-linecap="round"/>'
+ +pts.map(([x,y])=>'<ellipse cx="'+x+'" cy="'+(y+2)+'" rx="52" ry="14" fill="var(--grass2)"/>').join("")}
 const nodes={};
-ORDER.forEach(st=>{const d=document.createElement("div");d.className="st idle";Object.assign(d.style,pct(posOf(st)));
- d.innerHTML='<div class="zz">z z</div>'+kid(st)+'<div class="who">'+esc(CAST[st].nick)+'</div><div class="count"></div>';stage.appendChild(d);nodes[st]=d});
+function ensure(st){if(nodes[st])return nodes[st];ORDER.push(st);const d=document.createElement("div");d.className="st idle";Object.assign(d.style,pct(posOf(st)));
+ d.innerHTML='<div class="zz">z z</div>'+kid(st)+'<div class="who">'+esc(cast(st).nick)+'</div><div class="count"></div>';stage.appendChild(d);nodes[st]=d;drawPaths();return d}
+drawPaths();
 
 let S=null,seen=new Map(),firstLoad=true,walking=0,LIVE=null,activeConv=null;
 function stationOf(l){return(l.name.match(/^\\d+\\.\\s*(.+)$/)||[])[1]||l.name}
 function pop(st,ch){const p=document.createElement("div");p.className="pop";p.textContent=ch;Object.assign(p.style,pct(posOf(st)));stage.appendChild(p);setTimeout(()=>p.remove(),1300)}
 function walk(from,to,label){ // the finishing chibi carries the scroll to the next station and walks home
- if(!CAST[from]||!CAST[to]||from===to){pop(to,"📜");return}
+ if(!nodes[from]||!nodes[to]||from===to){pop(to,"📜");return}
  walking++;const w=document.createElement("div");w.className="walker";w.innerHTML=kid(from)+'<div class="scroll">📜</div>';
  const a=posOf(from),b=posOf(to);Object.assign(w.style,pct(a));stage.appendChild(w);nodes[from].style.visibility="hidden";
  const dist=Math.hypot(b[0]-a[0],b[1]-a[1]),ms=Math.min(4200,Math.max(1200,dist*4.2));
@@ -134,16 +142,16 @@ function render(){
  const lanes=S.lanes||[];document.getElementById("story").textContent=(S.title||"").replace(/^Factory · /,"story: ");
  const h=S.server||{};document.getElementById("slots").textContent="🧠 "+(h.live?.connections??0)+"/"+(h.max_batch_size??5)+" brains busy";
  const done=lanes.filter(l=>l.status==="ok"||l.status==="failed").length;document.getElementById("progress").textContent="📦 "+done+"/"+lanes.length+" steps";
- const counts={},act=new Set();lanes.forEach(l=>{const st=stationOf(l);counts[st]=(counts[st]||0)+1;if(l.status==="running")act.add(st)});
+ const counts={},act=new Set();lanes.forEach(l=>{const st=stationOf(l);ensure(st);counts[st]=(counts[st]||0)+1;if(l.status==="running")act.add(st)});
  ORDER.forEach(st=>{const n=nodes[st];n.classList.toggle("working",act.has(st));n.classList.toggle("idle",!act.has(st));
   n.querySelector(".count").textContent=counts[st]?counts[st]+" job"+(counts[st]>1?"s":""):"";});
  // Transitions: a step finished → its chibi walks to the station of the next step.
  lanes.forEach((l,i)=>{const prev=seen.get(l.id);seen.set(l.id,l.status);if(firstLoad||prev===l.status)return;
   if(l.status==="ok"||l.status==="failed"){const st=stationOf(l);const nx=lanes[i+1];nodes[st].classList.add("done-flash");setTimeout(()=>nodes[st].classList.remove("done-flash"),1100);
    if(l.status==="failed")pop(st,"💥");
-   logLine('<b>'+esc(CAST[st]?.nick||st)+'</b> finished <i>'+esc(l.task)+'</i> '+(l.status==="ok"?'<span class="ok">✓</span>':'<span class="bad">✗</span>')+(nx?' → passes the scroll to <b>'+esc(CAST[stationOf(nx)]?.nick||stationOf(nx))+'</b>':'')+' <span class="sub">'+esc(l.detail||"")+'</span>');
+   logLine('<b>'+esc(cast(st).nick)+'</b> finished <i>'+esc(l.task)+'</i> '+(l.status==="ok"?'<span class="ok">✓</span>':'<span class="bad">✗</span>')+(nx?' → passes the scroll to <b>'+esc(cast(stationOf(nx)).nick)+'</b>':'')+' <span class="sub">'+esc(l.detail||"")+'</span>');
    if(nx)walk(st,stationOf(nx),l.task)}});
- if(firstLoad){lanes.filter(l=>l.status!=="running").slice(-8).reverse().forEach(l=>logLine('<b>'+esc(CAST[stationOf(l)]?.nick||stationOf(l))+'</b> finished <i>'+esc(l.task)+'</i> '+(l.status==="ok"?'<span class="ok">✓</span>':'<span class="bad">✗</span>')+' <span class="sub">'+esc(l.detail||"")+'</span>'))}
+ if(firstLoad){lanes.filter(l=>l.status!=="running").slice(-8).reverse().forEach(l=>logLine('<b>'+esc(cast(stationOf(l)).nick)+'</b> finished <i>'+esc(l.task)+'</i> '+(l.status==="ok"?'<span class="ok">✓</span>':'<span class="bad">✗</span>')+' <span class="sub">'+esc(l.detail||"")+'</span>'))}
  firstLoad=false;
  const running=lanes.filter(l=>l.status==="running").pop();activeConv=running?running.conv:null;renderBubble(running)}
 function renderBubble(running){document.querySelectorAll(".bubble").forEach(b=>b.remove());if(!running)return;const st=stationOf(running);const n=nodes[st];if(!n)return;
