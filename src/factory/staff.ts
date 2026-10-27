@@ -2,7 +2,7 @@
 //   { "roles": [{ "name": "<station>", "when": "before" | "after", "station": "<existing station>", "task": "..." }] }
 // The role's job description is factory/stations/<name>.md. A "before" role writes notes that the station then
 // reads as an input; an "after" role reviews the station's work and writes a verdict; "changes" sends it back once.
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 
 type Role = { name: string; when: "before" | "after"; station: string; task?: string };
@@ -48,6 +48,7 @@ export function withStaff<S extends Step, R extends Result>(
 		let res = await runOnce(task, feedback);
 		for (const r of mine.filter((r) => r.when === "after")) {
 			if (!res.ok || (res.check && !res.check.ok)) break;
+			rmSync(join(repo, out(r)), { force: true }); // no stale verdict from an earlier round
 			await runOnce({
 				...step, key: `${step.key}/${r.name}`, station: r.name, prompt: r.name, check: undefined,
 				task: `${r.task ?? "Review the previous station's work."}\nThe station ${step.station} just did:\n${step.task}\n\nIts output: ${step.outputs.join(", ")}.\nWrite your verdict to ${out(r)}, exactly {"verdict":"approve"} or {"verdict":"changes","issue":"<the ONE thing to fix>"}.`,
