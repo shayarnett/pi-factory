@@ -12,14 +12,18 @@ For each suggested change you accept:
 - `responsibility`: add the duty to `factory/stations/<station>.md` as one line where it fits. Don't rewrite the
   rest.
 - `retire`: remove the role from `factory/staff.json` (leave its .md).
-Decline a change that duplicates an existing duty, or that the record doesn't support. Every role costs time on
+Decline a change the record doesn't support. If it repeats a duty the station already has but the record shows
+the station isn't doing it, the duty is too weak: rewrite that line as a firm rule (must / never, with the
+concrete case from the record) instead of declining it. Every role costs time on
 every story; add one only when it should save more than it costs.
 
 ## Agent pool
 `factory/staff/pool.json` is `{ "streams": <n> }`: how many stories run at once (1–8). The step message has the
 measured throughput (stories finished per hour) and average story time at each pool size tried. More streams
-share one model server, so each one slows the others. Grow the pool one stream at a time while the extra
-stream still adds throughput: if the current size hasn't been measured over at least 3 stories, keep it; if it
+share one model server, so each one slows the others. A supervisor `staffing` request is the demand side: grow toward its `need`
+(never past the number of stories ready to start), and let the measurements decide how far. Grow the pool one
+stream at a time while the extra stream still adds throughput: if the current size hasn't been measured over at least 3 stories, keep it (unless a staffing request shows ready
+stories waiting and no size above 1 has been tried yet: then try 2); if it
 beats the size below by 10% or more, try one more; if it doesn't, go back down one and keep that.
 
 ## Log

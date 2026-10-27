@@ -28,13 +28,14 @@ CURATE=${CURATE-}
 # AIR) runs in worktree $WT/_staff on branch staff and is merged like the curator. AIR sets the pool size in
 # factory/staff/pool.json ({"streams": n}), which overrides MAX and is reread every loop.
 STAFF=${STAFF-1}
+ON_RELEASE=${ON_RELEASE-} # a command run on main after each release, e.g. 'git push -q origin main --tags'
 export LOCAL_LLM_BASE_URL=http://127.0.0.1:18888/v1
 mise_env() { eval "$(mise env -C "$1" -s bash)"; }
 log() { echo "$(date +%T) $*"; }
 
 cd "$REPO" || exit 1
 [ "$(git branch --show-current)" = main ] || { log "$REPO must be on main"; exit 1; }
-merged() { case " $ROOTS " in *" $1 "*) return 0 ;; esac; git merge-base --is-ancestor "refs/tags/done/$1" main 2>/dev/null; }
+merged() { [ "$1" = none ] && return 0; case " $ROOTS " in *" $1 "*) return 0 ;; esac; git merge-base --is-ancestor "refs/tags/done/$1" main 2>/dev/null; }
 deps() { grep -o 'Depends on: [a-z0-9-]*' "$REPO/factory/stories/$1/story.md" | sed 's/Depends on: //'; }
 suite() { [ -n "$FAKE" ] || (mise_env "$REPO" && eval "$SUITE" >"$1" 2>&1); }
 gate_ok() { grep -q "^- gate: pass" "$1" 2>/dev/null || { grep -q "bin/rails test: pass" "$1" && grep -q "bin/rails test:system: pass" "$1"; } 2>/dev/null; }
@@ -103,7 +104,7 @@ curate_tick() {
 	if [ "$curating" != 0 ]; then
 		kill -0 "$curating" 2>/dev/null && return
 		curating=0
-		if git merge -q --no-edit curate >/dev/null 2>&1; then log "curated: $(git diff --name-only HEAD@{1} HEAD -- factory/stories | cut -d/ -f3 | sort -u | tr '\n' ' ')"
+		if git merge -q --no-edit curate >/dev/null 2>&1; then log "curated: $(git diff --name-only HEAD@{1} HEAD -- factory/stories | cut -d/ -f3 | sort -u | tr '\n' ' ')"; new_work=1
 		else git merge --abort 2>/dev/null; log "curate merge failed"; fi
 		return
 	fi
@@ -151,10 +152,11 @@ release() {
 	git tag "release/$n" HEAD
 	git worktree remove --force "$WT/$s" 2>/dev/null
 	log "RELEASE $n: $s"
+	[ -z "$ON_RELEASE" ] || eval "$ON_RELEASE" >> "$RUNS/on-release.log" 2>&1 || log "on-release failed (see $RUNS/on-release.log)"
 }
 
 # Supervisor + AIR: after every 3 finished stories, in their own worktree; merged between releases.
-staffing=0 since=0 recent=""
+staffing=0 since=0 recent="" new_work=""
 staff_tick() {
 	if [ "$staffing" != 0 ]; then
 		kill -0 "$staffing" 2>/dev/null && return
@@ -163,13 +165,14 @@ staff_tick() {
 		else git merge --abort 2>/dev/null; log "staff merge failed"; fi
 		return
 	fi
-	[ "$since" -ge 3 ] || return
+	# after every 3 finished stories (waste), or when the planner/curator adds work (staffing vs. the backlog)
+	[ "$since" -ge 3 ] || [ -n "$new_work" ] || return
 	local three=$(echo $recent | tr ' ' '\n' | tail -3 | tr '\n' ' ')
-	since=0 recent=""
+	since=0 recent="" new_work=""
 	git worktree remove --force "$WT/_staff" 2>/dev/null
 	git worktree add -q -B staff "$WT/_staff" main
 	log "supervise: $three"
-	(cd "$PI" && src/factory/supervise.sh "$WT/_staff" "$RUNS" $three > "$RUNS/staff-$(date +%s).log" 2>&1) &
+	(cd "$PI" && STREAMS=$(echo $running | wc -w | tr -d ' ') src/factory/supervise.sh "$WT/_staff" "$RUNS" $three > "$RUNS/staff-$(date +%s).log" 2>&1) &
 	staffing=$!
 }
 pool_size() { local n; n=$(jq -r '.streams // empty' factory/staff/pool.json 2>/dev/null); [ -n "$n" ] && [ "$n" -ge 1 ] && [ "$n" -le 8 ] && echo "$n" || echo "$MAX0"; }

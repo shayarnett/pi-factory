@@ -15,6 +15,19 @@ record() {
 	jq -r '.steps[] | "- \(.key) [\(.station)] \(.status) \(((.end // .start) - .start) / 1000 | floor)s \(.calls // 0) calls"' "$RUNS/$1/steps.json" 2>/dev/null
 	echo; echo '```'; head -c 8000 "$RUNS/$1/audit.md" 2>/dev/null; echo; echo '```'
 }
+# The backlog: stories not yet released, with their dependencies; "ready" when every dependency is released.
+backlog() {
+	local n=0 r=0
+	for d in factory/stories/*/; do
+		s=$(basename "$d"); git merge-base --is-ancestor "refs/tags/done/$s" HEAD 2>/dev/null && continue
+		git rev-parse -q --verify "refs/tags/failed/$s" >/dev/null && continue
+		deps=$(grep -o 'Depends on: [a-z0-9-]*' "$d/story.md" 2>/dev/null | sed 's/Depends on: //' | tr '\n' ' ')
+		ready=yes; for x in $deps; do [ "$x" = none ] || git merge-base --is-ancestor "refs/tags/done/$x" HEAD 2>/dev/null || ready=no; done
+		n=$((n + 1)); [ $ready = yes ] && r=$((r + 1))
+		echo "- $s (depends on: ${deps:-none}; ready: $ready)"
+	done
+	echo "Waiting: $n stories, $r ready to start. Streams: $(jq -r '.streams // empty' factory/staff/pool.json 2>/dev/null || echo "graph.sh default") (running now: ${STREAMS:-?})."
+}
 stations() { for f in factory/stations/*.md; do echo "### $f"; cat "$f"; echo; done; }
 # Throughput by pool size, from graph.sh's factory/staff log of finished stories (end start story result streams).
 pool() {
@@ -34,7 +47,7 @@ keep() { # keep only files matching the lane patterns; revert the rest
 pi -p "$(cat "$PI/src/factory/roles/supervisor.md")
 
 ## Task
-Review these $# workstreams and write your suggestions to $P.
+Review the backlog and these $# workstreams, and write your suggestions to $P.
 
 ## Stations
 $(stations)
@@ -42,8 +55,11 @@ $(stations)
 ## Staff roles AIR added (factory/staff.json)
 $(cat factory/staff.json 2>/dev/null || echo '(none)')
 
+## Backlog
+$(backlog)
+
 ## Workstreams
-$(for s in "$@"; do record "$s"; done)" </dev/null > "$RUNS/supervisor-$(date +%s).log" 2>&1
+$(if [ $# -gt 0 ]; then for s in "$@"; do record "$s"; done; else echo "(none finished yet)"; fi)" </dev/null > "$RUNS/supervisor-$(date +%s).log" 2>&1
 keep "$P"
 [ -f "$P" ] || { echo "supervisor wrote no $P"; exit 1; }
 echo "supervisor: $(jq -c '[.changes[]? | .type + ":" + (.name // .station // "")]' "$P" 2>/dev/null)"
@@ -52,6 +68,9 @@ pi -p "$(cat "$PI/src/factory/roles/air.md")
 
 ## Task
 Apply the supervisor's suggestions and size the pool.
+
+## Backlog
+$(backlog)
 
 ## Supervisor's suggestions ($P)
 $(cat "$P")

@@ -203,7 +203,9 @@ function liveDoc(run: string | null, conversationId: number): Json {
 			.prepare("select seq, content from document_revisions where document_id = ? and kind = 'base' order by seq desc limit 1")
 			.get(doc.id) as Json;
 		let cached = liveCache.get(`${run}:${doc.id}`);
-		if (!cached || (base && base.seq > cached.seq)) cached = { seq: base?.seq ?? 0, value: base ? parse(base.content) : {} };
+		const newest = (db.prepare("SELECT max(seq) AS m FROM document_revisions WHERE document_id = ?").get(doc.id) as Json)?.m ?? 0;
+		// a rerun recreates run.sqlite, so ids repeat and seq starts over: a cache ahead of the db is stale
+		if (!cached || (base && base.seq > cached.seq) || cached.seq > newest) cached = { seq: base?.seq ?? 0, value: base ? parse(base.content) : {} };
 		const rows = db
 			.prepare("select seq, kind, content from document_revisions where document_id = ? and seq > ? order by seq")
 			.all(doc.id, cached.seq) as Json[];
@@ -271,14 +273,15 @@ createServer(async (req, res) => {
 const withRun = (html: string) =>
 	html.replaceAll('fetch("/api/state")', 'fetch("/api/state"+location.search)').replaceAll('fetch("/api/live?conv="+', 'fetch("/api/live?"+location.search.slice(1)+"&conv="+');
 
-// Runs with a step still running, newest first; if none, the newest run.
+// Runs with a step running or updated in the last 10 minutes (so a run between steps, e.g. during its check, stays
+// on screen), newest first; if none, the newest run.
 function activeRuns() {
 	if (!RUNS) return [];
 	const all = readdirSync(RUNS)
 		.filter((d) => existsSync(join(RUNS, d, "steps.json")))
 		.map((d) => ({ name: d, mtime: statSync(join(RUNS, d, "steps.json")).mtimeMs, steps: JSON.parse(readFileSync(join(RUNS, d, "steps.json"), "utf8")).steps as Json[] }))
 		.sort((a, b) => b.mtime - a.mtime);
-	const live = all.filter((r) => r.steps.some((s) => s.status === "running"));
+	const live = all.filter((r) => r.steps.some((s) => s.status === "running") || Date.now() - r.mtime < 10 * 60_000);
 	return (live.length ? live : all.slice(0, 1)).map((r) => ({ name: r.name, step: r.steps.at(-1)?.key ?? "", steps: r.steps.length }));
 }
 
