@@ -4,7 +4,7 @@
 # writes outside its lane is reverted. Commits the result in <repo> (graph.sh runs this in a worktree).
 set -u
 PI=$(cd "$(dirname "$0")/../.." && pwd)
-REPO=$1 RUNS=$2; shift 2
+REPO=$1 RUNS=$(cd "$2" && pwd); shift 2
 cd "$REPO" || exit 1
 mkdir -p factory/staff/proposals
 P=factory/staff/proposals/$(date +%Y%m%d-%H%M%S).json
