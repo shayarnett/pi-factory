@@ -71,6 +71,6 @@ keep "$P" "factory/stations/*.md" factory/staff.json factory/staff/pool.json fac
 jq -e . factory/staff.json >/dev/null 2>&1 || git checkout -q -- factory/staff.json 2>/dev/null || rm -f factory/staff.json
 jq -e '.streams >= 1 and .streams <= 8' factory/staff/pool.json >/dev/null 2>&1 || git checkout -q -- factory/staff/pool.json 2>/dev/null || rm -f factory/staff/pool.json
 echo "air: $(git status --short | tr '\n' ' ')"
-git add -A factory/staff factory/stations
+git add -A factory/staff factory/stations; git add -A factory/staff.json 2>/dev/null
 git add -f "$P" 2>/dev/null
 git -c user.name=air -c user.email=air@factory.local commit -qm "[staff] supervisor + AIR after: $*" || echo "air: no changes"
